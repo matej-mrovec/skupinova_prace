@@ -1,7 +1,6 @@
 # Vestavěné knihovny
 import csv
 import json
-import os
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -19,39 +18,80 @@ SLOUPCE = ["Číslo čipu", "Zaměstnanec", "Příchod", "Odchod", "Hodiny"]
 
 
 def nacti_data(dochazka_csv):
-    #Načte platné řádky CSV a doplní délku směny v hodinách.
+    # Načte platné řádky CSV a doplní délku směny v hodinách.
     zaznamy = []
-    with open(dochazka_csv, "r", encoding="utf-8", newline="") as soubor:
+
+    with open(dochazka_csv, "r", encoding="utf-8-sig", newline="") as soubor:
         ctecka = csv.DictReader(soubor, delimiter=";")
+
+        if not ctecka.fieldnames:
+            raise ValueError("CSV neobsahuje záhlaví.")
+
+        # Normalizace názvů sloupců
+        hlavicky = {
+            nazev.strip().lower(): nazev
+            for nazev in ctecka.fieldnames
+            if nazev
+        }
+
         pozadovane = {"číslo čipu", "zaměstnanec", "příchod", "odchod"}
-        if not ctecka.fieldnames or not pozadovane.issubset(ctecka.fieldnames):
-            raise ValueError("CSV musí obsahovat sloupce: číslo čipu;zaměstnanec;příchod;odchod")
+
+        if not pozadovane.issubset(hlavicky):
+            raise ValueError(
+                "CSV musí obsahovat sloupce: "
+                "číslo čipu;zaměstnanec;příchod;odchod"
+            )
 
         for cislo, radek in enumerate(ctecka, start=2):
             try:
-                prichod = datetime.strptime(radek["příchod"].strip(), FORMAT_CASU)
-                odchod = datetime.strptime(radek["odchod"].strip(), FORMAT_CASU)
+                prichod_text = radek[hlavicky["příchod"]].strip()
+                odchod_text = radek[hlavicky["odchod"]].strip()
+
+                if not prichod_text or not odchod_text:
+                    raise ValueError("Chybí datum příchodu nebo odchodu.")
+
+                prichod = datetime.strptime(prichod_text, FORMAT_CASU)
+                odchod = datetime.strptime(odchod_text, FORMAT_CASU)
+
                 if odchod < prichod:
-                    raise ValueError("odchod je před příchodem")
+                    raise ValueError("Odchod je před příchodem.")
+
+                cislo_cipu = (radek[hlavicky["číslo čipu"]] or "").strip()
+                zamestnanec = (radek[hlavicky["zaměstnanec"]] or "").strip()
+
+                if not cislo_cipu or not zamestnanec:
+                    raise ValueError("Chybí číslo čipu nebo jméno zaměstnance.")
+
                 zaznamy.append({
-                    "číslo čipu": radek["číslo čipu"].strip(),
-                    "zaměstnanec": radek["zaměstnanec"].strip(),
+                    "číslo čipu": cislo_cipu,
+                    "zaměstnanec": zamestnanec,
                     "příchod": prichod,
                     "odchod": odchod,
-                    "hodiny": round((odchod - prichod).total_seconds() / 3600, 2),
+                    "hodiny": round(
+                        (odchod - prichod).total_seconds() / 3600, 2
+                    ),
                 })
-            except (ValueError, TypeError, KeyError) as chyba:
+
+            except (ValueError, TypeError, KeyError, AttributeError) as chyba:
                 console.print(
                     f"[bold yellow]"
                     f"Upozornění: řádek {cislo} přeskočen ({chyba})."
                     f"[/bold yellow]"
                 )
+
     return zaznamy
 
 
 def seskup_zamestnance(zaznamy):
-    #Vrátí souhrn hodin a směn pro každého zaměstnance.
-    souhrn = defaultdict(lambda: {"číslo čipu": "", "počet_směn": 0, "celkem_hodin": 0.0})
+    # Vrátí souhrn hodin a směn pro každého zaměstnance.
+    souhrn = defaultdict(
+        lambda: {
+            "číslo čipu": "",
+            "počet_směn": 0,
+            "celkem_hodin": 0.0
+        }
+    )
+
     for zaznam in zaznamy:
         jmeno = zaznam["zaměstnanec"]
         souhrn[jmeno]["číslo čipu"] = zaznam["číslo čipu"]
@@ -59,17 +99,24 @@ def seskup_zamestnance(zaznamy):
         souhrn[jmeno]["celkem_hodin"] += zaznam["hodiny"]
 
     vysledek = []
+
     for jmeno, udaje in souhrn.items():
         udaje["zaměstnanec"] = jmeno
         udaje["celkem_hodin"] = round(udaje["celkem_hodin"], 2)
-        udaje["průměrná_směna"] = round(udaje["celkem_hodin"] / udaje["počet_směn"], 2)
+        udaje["průměrná_směna"] = round(
+            udaje["celkem_hodin"] / udaje["počet_směn"], 2
+        )
         vysledek.append(udaje)
 
-    return sorted(vysledek, key=lambda x: x["celkem_hodin"], reverse=True)
+    return sorted(
+        vysledek,
+        key=lambda x: x["celkem_hodin"],
+        reverse=True
+    )
 
 
 def zobraz_souhrn(zaznamy):
-    #Zobrazí souhrn zaměstnanců a extrémy směn pomocí  tabulky.
+    # Zobrazí souhrn zaměstnanců a extrémy směn pomocí tabulky.
     if not zaznamy:
         console.print("[bold red]Žádná data.[/bold red]")
         return
@@ -98,14 +145,25 @@ def zobraz_souhrn(zaznamy):
     nejdelsi = max(zaznamy, key=lambda x: x["hodiny"])
 
     console.print(
-        f"\n[bold]Nejkratší směna:[/bold] {nejkratsi['zaměstnanec']} ({nejkratsi['příchod']:%Y-%m-%d %H:%M} - {nejkratsi['odchod']:%H:%M}) | [green]{nejkratsi['hodiny']:.2f} h[/green]")
+        f"\n[bold]Nejkratší směna:[/bold] "
+        f"{nejkratsi['zaměstnanec']} "
+        f"({nejkratsi['příchod']:%Y-%m-%d %H:%M} - "
+        f"{nejkratsi['odchod']:%H:%M}) | "
+        f"[green]{nejkratsi['hodiny']:.2f} h[/green]"
+    )
+
     console.print(
-        f"[bold]Nejdelší směna:[/bold] {nejdelsi['zaměstnanec']} ({nejdelsi['příchod']:%Y-%m-%d %H:%M} - {nejdelsi['odchod']:%H:%M}) | [green]{nejdelsi['hodiny']:.2f} h[/green]")
+        f"[bold]Nejdelší směna:[/bold] "
+        f"{nejdelsi['zaměstnanec']} "
+        f"({nejdelsi['příchod']:%Y-%m-%d %H:%M} - "
+        f"{nejdelsi['odchod']:%H:%M}) | "
+        f"[green]{nejdelsi['hodiny']:.2f} h[/green]"
+    )
 
 
 def vytvor_tabulku_zaznamu(nalezene, titul="Záznamy"):
     table = Table(title=titul)
-    table.add_column("Zaměstnanec", justify="left")    
+    table.add_column("Zaměstnanec", justify="left")
     table.add_column("Číslo čipu", justify="right")
     table.add_column("Příchod", justify="left")
     table.add_column("Odchod", justify="left")
@@ -119,64 +177,119 @@ def vytvor_tabulku_zaznamu(nalezene, titul="Záznamy"):
             zaznam["odchod"].strftime("%H:%M"),
             f"{zaznam['hodiny']:.2f} h",
         )
+
     return table
 
 
 def hledej(zaznamy):
-    #Vyhledá záznamy podle jména nebo čísla čipu.
+    # Vyhledá záznamy podle jména nebo čísla čipu.
     hledany = input("Zadejte jméno nebo číslo čipu: ").strip().lower()
-    nalezene = [z for z in zaznamy if hledany in z["zaměstnanec"].lower()
-                or hledany in z["číslo čipu"].lower()]
+
+    if not hledany:
+        console.print("[yellow]Zadejte hledaný výraz.[/yellow]")
+        return
+
+    nalezene = [
+        z for z in zaznamy
+        if hledany in z["zaměstnanec"].lower()
+        or hledany in z["číslo čipu"].lower()
+    ]
 
     console.print(f"[bold]Nalezeno záznamů: {len(nalezene)}[/bold]")
+
     if nalezene:
-        table = vytvor_tabulku_zaznamu(nalezene, titul=f"Výsledky hledání: '{hledany}'")
+        table = vytvor_tabulku_zaznamu(
+            nalezene,
+            titul=f"Výsledky hledání: '{hledany}'"
+        )
         console.print(table)
 
 
 def filtruj_den(zaznamy):
-    #Filtruje a vypíše příchody pro zadané datum.
+    # Filtruje a vypíše příchody pro zadané datum.
     den = input("Zadejte datum (YYYY-MM-DD): ").strip()
-    nalezene = [z for z in zaznamy if z["příchod"].strftime("%Y-%m-%d") == den]
+
+    try:
+        datetime.strptime(den, "%Y-%m-%d")
+    except ValueError:
+        console.print(
+            "[bold red]Neplatný formát data. Použijte YYYY-MM-DD.[/bold red]"
+        )
+        return
+
+    nalezene = [
+        z for z in zaznamy
+        if z["příchod"].strftime("%Y-%m-%d") == den
+    ]
+
     nalezene.sort(key=lambda z: z["příchod"])
 
     if nalezene:
-        table = vytvor_tabulku_zaznamu(nalezene, titul=f"Příchody dne {den}")
+        table = vytvor_tabulku_zaznamu(
+            nalezene,
+            titul=f"Příchody dne {den}"
+        )
         console.print(table)
     else:
-        console.print("[yellow]Pro tento den nebyly nalezeny žádné záznamy.[/yellow]")
+        console.print(
+            "[yellow]Pro tento den nebyly nalezeny žádné záznamy.[/yellow]"
+        )
 
 
 def zobraz_upozorneni(zaznamy):
-    #Upozorní na neobvykle krátké směny nebo pozdní příchody.
-    podezrele = [z for z in zaznamy if z["hodiny"] < 4 or z["příchod"].hour >= 9]
+    # Upozorní na neobvykle krátké směny nebo pozdní příchody.
+    podezrele = [
+        z for z in zaznamy
+        if z["hodiny"] < 4 or z["příchod"].hour >= 9
+    ]
 
-    console.print("\n[bold red]UPOZORNĚNÍ (směna kratší než 4 h nebo příchod v 9:00 a později)[/bold red]")
+    console.print(
+        "\n[bold red]UPOZORNĚNÍ "
+        "(směna kratší než 4 h nebo příchod v 9:00 a později)[/bold red]"
+    )
+
     if not podezrele:
         console.print("[green]Žádné neobvyklé směny.[/green]")
         return
 
-    table = vytvor_tabulku_zaznamu(podezrele, titul="Podezřelé směny")
+    table = vytvor_tabulku_zaznamu(
+        podezrele,
+        titul="Podezřelé směny"
+    )
     console.print(table)
 
 
 def uloz_json(data, nazev_souboru):
     try:
-        with open(nazev_souboru, "w", encoding="utf-8", newline="") as soubor:
-            json.dump(data, soubor, indent=4, ensure_ascii=False)
-            console.print(
-                f"[bold green]Data byla uložena do {nazev_souboru}[/bold green]"
+        with open(
+            nazev_souboru,
+            "w",
+            encoding="utf-8",
+            newline=""
+        ) as soubor:
+            json.dump(
+                data,
+                soubor,
+                indent=4,
+                ensure_ascii=False
             )
-    except OSError as error:
+
         console.print(
-            f"[bold red]"
-            f"Chyba: {error}"
-            f"[/bold red]"
+            f"[bold green]Data byla uložena do {nazev_souboru}[/bold green]"
+        )
+
+    except (OSError, TypeError, ValueError) as error:
+        console.print(
+            f"[bold red]Chyba při ukládání JSON: {error}[/bold red]"
         )
 
 
 def exportuj_json(zaznamy):
-    cesta = input("Název JSON souboru (Enter = vysledek.json): ").strip() or "vysledek.json"
+    cesta = (
+        input("Název JSON souboru (Enter = vysledek.json): ").strip()
+        or "vysledek.json"
+    )
+
     souhrn = seskup_zamestnance(zaznamy)
     uloz_json(souhrn, cesta)
 
@@ -195,37 +308,47 @@ def menu():
 
 def main():
     if len(sys.argv) != 2:
-        console.print("[bold red]Použití: python main.py dochazka.csv[/bold red]")
+        console.print(
+            "[bold red]Použití: python main.py dochazka.csv[/bold red]"
+        )
         return
 
     try:
         zaznamy = nacti_data(sys.argv[1])
-        console.print(f"[green]Načteno záznamů: {len(zaznamy)}[/green]")
+
+        console.print(
+            f"[green]Načteno záznamů: {len(zaznamy)}[/green]"
+        )
 
         while True:
             menu()
             volba = input("\nVolba: ").strip()
+
             if volba == "1":
                 zobraz_souhrn(zaznamy)
+
             elif volba == "2":
                 hledej(zaznamy)
+
             elif volba == "3":
                 filtruj_den(zaznamy)
+
             elif volba == "4":
                 zobraz_upozorneni(zaznamy)
+
             elif volba == "5":
                 exportuj_json(zaznamy)
+
             elif volba == "0":
                 console.print("[bold]Nashledanou.[/bold]")
                 break
+
             else:
                 console.print("[red]Neplatná volba.[/red]")
 
     except (FileNotFoundError, OSError, ValueError) as chyba:
         console.print(
-            f"[bold red]"
-            f"Chyba: {chyba}"
-            f"[/bold red]"
+            f"[bold red]Chyba: {chyba}[/bold red]"
         )
 
 
